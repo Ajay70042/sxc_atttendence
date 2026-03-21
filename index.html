@@ -793,9 +793,9 @@ async function fetchAttendance() {
   }
 
   const endpoints = {
-    overall: `GetOverallAttendance?FormNo=${roll}&Semester=${selectedSem}`,
-    monthly: `GetMonthlyAttendance?FormNo=${roll}&Semester=${selectedSem}&Date=${encodeURIComponent(dateStr)}`,
-    daily:   `GetDailyAttendance?FormNo=${roll}&Semester=${selectedSem}&Date=${encodeURIComponent(dateStr)}`,
+    overall: `showOverallAttendance?FormNo=${roll}&Semester=${selectedSem}`,
+    monthly: `showMonthlyAttendance?FormNo=${roll}&Semester=${selectedSem}&Date=${encodeURIComponent(dateStr)}`,
+    daily:   `showDailyAttendance?FormNo=${roll}&Semester=${selectedSem}&Date=${encodeURIComponent(dateStr)}`,
   };
 
   const url = PROXY + encodeURIComponent(base + endpoints[currentTab]);
