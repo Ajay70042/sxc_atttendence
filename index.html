@@ -792,26 +792,35 @@ async function fetchAttendance() {
     dateStr = `${d.getMonth()+1}/${d.getDate()}/${d.getFullYear()}`;
   }
 
-  const endpoints = {
-    overall: `showOverallAttendance?FormNo=${roll}&Semester=${selectedSem}`,
-    monthly: `showMonthlyAttendance?FormNo=${roll}&Semester=${selectedSem}&Date=${encodeURIComponent(dateStr)}`,
-    daily:   `showDailyAttendance?FormNo=${roll}&Semester=${selectedSem}&Date=${encodeURIComponent(dateStr)}`,
+  const endpointNames = {
+    overall: 'showOverallAttendance',
+    monthly: 'showMonthlyAttendance',
+    daily:   'showDailyAttendance',
   };
 
-  const url = PROXY + encodeURIComponent(base + endpoints[currentTab]);
+  const url = PROXY + encodeURIComponent(base + endpointNames[currentTab]);
+
+  // POST body
+  const formData = new URLSearchParams();
+  formData.append('FormNo', roll);
+  formData.append('Semester', selectedSem);
+  if (dateStr) formData.append('Date', dateStr);
 
   try {
     const res = await fetch(url, {
+      method: 'POST',
       headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
         'X-Requested-With': 'XMLHttpRequest',
         'Referer': 'https://sxcran.ac.in/Student/AttendanceSummary',
-      }
+      },
+      body: formData.toString(),
     });
 
-    if (!res.ok) throw new Error(`Server error: ${res.status}`);
+    if (!res.ok) throw new Error(`Server error ${res.status} — endpoint may be wrong.`);
     const text = await res.text();
     let data;
-    try { data = JSON.parse(text); } catch { throw new Error('Unexpected server response. Check your roll number.'); }
+    try { data = JSON.parse(text); } catch { throw new Error(`Server sent unexpected response: ${text.substring(0, 120)}`); }
 
     document.getElementById('loader').classList.remove('visible');
 
