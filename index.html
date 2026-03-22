@@ -185,6 +185,7 @@ body { font-family: 'Outfit', sans-serif; background: var(--bg); color: var(--te
     </div>
     <div class="topbar-actions">
       <button class="icon-btn" onclick="toggleDark()" id="darkBtn">🌙</button>
+      <button class="icon-btn" onclick="openFriends()">👥</button>
       <button class="icon-btn" onclick="openSettings()">⚙️</button>
     </div>
   </div>
@@ -258,6 +259,39 @@ body { font-family: 'Outfit', sans-serif; background: var(--bg); color: var(--te
   </div>
 </div>
 
+<!-- Friends Panel -->
+<div class="settings-panel" id="friendsPanel">
+  <button class="close-settings" onclick="closeFriends()">✕</button>
+  <div class="settings-title">👥 Friends</div>
+
+  <div class="settings-group">
+    <div class="settings-group-label">Add Friend</div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <input class="form-input" type="text" id="friendName" placeholder="Friend's name" autocomplete="off">
+      <input class="form-input" type="text" id="friendRoll" placeholder="Exam Roll No." autocomplete="off" autocapitalize="characters">
+      <div style="display:flex;gap:8px">
+        <div style="flex:1">
+          <div class="form-label">Semester</div>
+          <select class="form-input" id="friendSem">
+            <option value="">Select</option>
+            <option value="I">I</option>
+            <option value="II">II</option>
+            <option value="IV">IV</option>
+            <option value="VI">VI</option>
+            <option value="VIII">VIII</option>
+          </select>
+        </div>
+      </div>
+      <button onclick="addFriend()" style="background:var(--primary);color:#fff;border:none;border-radius:8px;padding:12px;font-family:Outfit,sans-serif;font-size:14px;font-weight:600;cursor:pointer">+ Add Friend</button>
+    </div>
+  </div>
+
+  <div class="settings-group">
+    <div class="settings-group-label">My Friends</div>
+    <div id="friendsList"></div>
+  </div>
+</div>
+
 <!-- Settings Panel -->
 <div class="settings-panel" id="settingsPanel">
   <button class="close-settings" onclick="closeSettings()">✕</button>
@@ -299,6 +333,15 @@ body { font-family: 'Outfit', sans-serif; background: var(--bg); color: var(--te
     <div class="settings-item">
       <div><div class="settings-item-label">Low Attendance Alert</div><div class="settings-item-sub">Warn when attendance &lt; 75%</div></div>
       <label class="toggle"><input type="checkbox" id="notifToggle" onchange="saveNotifPref()" checked><span class="toggle-slider"></span></label>
+    </div>
+  </div>
+
+  <div class="settings-group">
+    <div class="settings-group-label">Backend Server</div>
+    <div class="settings-item" style="flex-direction:column;align-items:flex-start;gap:10px">
+      <div><div class="settings-item-label">Backend URL</div><div class="settings-item-sub">Render.com URL for daily attendance</div></div>
+      <input class="form-input" type="url" id="backendInput" placeholder="https://your-app.onrender.com" style="font-size:13px">
+      <button onclick="saveBackend()" style="background:var(--primary);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-family:Outfit,sans-serif;font-size:13px;font-weight:600;cursor:pointer;width:100%">Save Backend URL</button>
     </div>
   </div>
 
@@ -368,6 +411,94 @@ function saveCredentials() {
   if (selectedSem) localStorage.setItem('sxc_sem', selectedSem);
 }
 
+// ── Backend ──
+function saveBackend() {
+  const url = document.getElementById('backendInput').value.trim().replace(/\/$/, '');
+  if (url) {
+    localStorage.setItem('sxc_backend', url);
+    showToast('Backend URL saved! Daily attendance should now work.', 3000);
+  } else {
+    localStorage.removeItem('sxc_backend');
+    showToast('Backend URL cleared');
+  }
+  closeSettings();
+}
+
+// ── Friends ──
+function openFriends() {
+  renderFriendsList();
+  document.getElementById('friendsPanel').classList.add('open');
+}
+function closeFriends() { document.getElementById('friendsPanel').classList.remove('open'); }
+
+function getFriends() {
+  try { return JSON.parse(localStorage.getItem('sxc_friends') || '[]'); }
+  catch(e) { return []; }
+}
+
+function saveFriends(friends) {
+  localStorage.setItem('sxc_friends', JSON.stringify(friends));
+}
+
+function addFriend() {
+  const name = document.getElementById('friendName').value.trim();
+  const roll = document.getElementById('friendRoll').value.trim().toUpperCase();
+  const sem  = document.getElementById('friendSem').value;
+  if (!name) { showToast('Please enter a name'); return; }
+  if (!roll) { showToast('Please enter roll number'); return; }
+  if (!sem)  { showToast('Please select semester'); return; }
+
+  const friends = getFriends();
+  if (friends.find(f => f.roll === roll)) { showToast('This roll number already exists!'); return; }
+
+  friends.push({ name, roll, sem, id: Date.now() });
+  saveFriends(friends);
+  document.getElementById('friendName').value = '';
+  document.getElementById('friendRoll').value = '';
+  document.getElementById('friendSem').value = '';
+  renderFriendsList();
+  showToast(name + ' added!');
+}
+
+function deleteFriend(id) {
+  const friends = getFriends().filter(f => f.id !== id);
+  saveFriends(friends);
+  renderFriendsList();
+  showToast('Friend removed');
+}
+
+function loadFriend(roll, sem) {
+  document.getElementById('rollno').value = roll;
+  selectedSem = sem;
+  document.querySelectorAll('.sem-pill').forEach(p => {
+    p.classList.toggle('active', p.textContent.trim() === sem);
+  });
+  closeFriends();
+  showToast('Loaded! Press Check Attendance');
+}
+
+function renderFriendsList() {
+  const friends = getFriends();
+  const container = document.getElementById('friendsList');
+  if (friends.length === 0) {
+    container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-muted);font-size:14px">No friends added yet</div>';
+    return;
+  }
+  container.innerHTML = friends.map(f => `
+    <div style="background:var(--card);border-radius:var(--radius-sm);border:1px solid var(--border);padding:14px 16px;margin-bottom:10px;display:flex;align-items:center;gap:12px">
+      <div style="width:40px;height:40px;border-radius:50%;background:var(--primary);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#fff;flex-shrink:0">
+        ${f.name.charAt(0).toUpperCase()}
+      </div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:14px;font-weight:600;color:var(--text)">${f.name}</div>
+        <div style="font-size:12px;color:var(--text-muted)">${f.roll} · Sem ${f.sem}</div>
+      </div>
+      <button onclick="loadFriend('${f.roll}','${f.sem}')" style="background:var(--primary);color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:Outfit,sans-serif">View</button>
+      <button onclick="deleteFriend(${f.id})" style="background:var(--red-bg);color:var(--red);border:none;border-radius:8px;padding:7px 10px;font-size:14px;cursor:pointer">🗑</button>
+    </div>
+  `).join('');
+}
+
 function loadPreferences() {
   const theme = localStorage.getItem('sxc_theme');
   if (theme === 'dark') {
@@ -389,6 +520,9 @@ function loadPreferences() {
   }
   if (localStorage.getItem('sxc_remember') === 'false') document.getElementById('rememberToggle').checked = false;
   if (localStorage.getItem('sxc_notif') === 'false') document.getElementById('notifToggle').checked = false;
+
+  const backendUrl = localStorage.getItem('sxc_backend');
+  if (backendUrl) document.getElementById('backendInput').value = backendUrl;
 
   const roll = localStorage.getItem('sxc_roll');
   const sem = localStorage.getItem('sxc_sem');
@@ -638,6 +772,7 @@ async function fetchAttendance() {
   document.getElementById('loader').classList.add('visible');
   document.getElementById('fetchBtn').disabled = true;
 
+  const BACKEND = localStorage.getItem('sxc_backend') || '';
   const base = 'https://sxcran.ac.in/Student/';
   const endpointMap = {overall:'showOverallAttendance', monthly:'showMonthlyAttendance', daily:'showDailyAttendance'};
   const params = new URLSearchParams();
@@ -677,21 +812,20 @@ async function fetchAttendance() {
 
   try {
     let text = '', worked = false, lastErr = '';
-    const isDaily = currentTab === 'daily';
-    const strategies = isDaily ? [
-      // Daily: only GET strategies since POST proxy strips body
+    const backendUrl = BACKEND ? BACKEND + '/attendance/' + currentTab : null;
+    const strategies = [];
+    // If backend is configured, try it first
+    if (backendUrl) {
+      strategies.push(['Backend', () => tryFetch(backendUrl, postOpts)]);
+    }
+    // Then fallback proxies
+    strategies.push(
+      ['POST corsproxy',  () => tryFetch('https://corsproxy.io/?' + encodeURIComponent(targetUrl), postOpts)],
+      ['POST allorigins', () => tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl), postOpts)],
       ['GET corsproxy',   () => tryFetch('https://corsproxy.io/?' + encodeURIComponent(getUrl), {method:'GET'})],
       ['GET allorigins',  () => tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(getUrl), {method:'GET'})],
       ['GET codetabs',    () => tryFetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(getUrl), {method:'GET'})],
-      ['POST corsproxy',  () => tryFetch('https://corsproxy.io/?' + encodeURIComponent(targetUrl), postOpts)],
-      ['POST allorigins', () => tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl), postOpts)],
-    ] : [
-      ['POST corsproxy',  () => tryFetch('https://corsproxy.io/?' + encodeURIComponent(targetUrl), postOpts)],
-      ['POST allorigins', () => tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl), postOpts)],
-      ['GET corsproxy',   () => tryFetch('https://corsproxy.io/?' + encodeURIComponent(getUrl), {method:'GET'})],
-      ['GET allorigins',  () => tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(getUrl), {method:'GET'})],
-      ['GET codetabs',    () => tryFetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(getUrl), {method:'GET'})],
-    ];
+    );
     for (const [name, fn] of strategies) {
       try {
         document.querySelector('.loader-text').textContent = 'Trying ' + name + '...';
