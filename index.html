@@ -802,8 +802,8 @@ async function fetchAttendance() {
 
   // POST body
   const formData = new URLSearchParams();
-  formData.append('examRollNo', roll);
-  formData.append('semester', selectedSem);
+  formData.append('FormNo', roll);
+  formData.append('Semester', selectedSem);
   if (dateStr) formData.append('Date', dateStr);
 
   try {
