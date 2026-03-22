@@ -413,6 +413,11 @@ function switchTab(tab, el) {
     dg.classList.add('visible');
     if (!document.getElementById('dateInput').value)
       document.getElementById('dateInput').value = new Date().toISOString().split('T')[0];
+// Make sure date is always set
+setInterval(() => {
+  if (!document.getElementById('dateInput').value)
+    document.getElementById('dateInput').value = new Date().toISOString().split('T')[0];
+}, 500);
   } else { dg.classList.remove('visible'); }
   const labels = {overall:'Check Overall Attendance', monthly:'Check Monthly Attendance', daily:'Check Daily Attendance'};
   document.getElementById('fetchLabel').textContent = labels[tab];
@@ -640,9 +645,10 @@ async function fetchAttendance() {
   params.append('semester', selectedSem);
 
   if (currentTab === 'daily') {
-    const dateVal = document.getElementById('dateInput').value || new Date().toISOString().split('T')[0];
+    const rawDate = document.getElementById('dateInput').value;
+    const dateVal = rawDate ? rawDate : new Date().toISOString().split('T')[0];
     params.append('adNew', dateVal);
-    console.log('Daily params:', params.toString());
+    showToast('Sending: examRollNo=' + roll + ' adNew=' + dateVal, 5000);
   } else if (currentTab === 'monthly') {
     const d = document.getElementById('dateInput').value ? new Date(document.getElementById('dateInput').value) : new Date();
     const dateStr = (d.getMonth()+1) + '/' + d.getDate() + '/' + d.getFullYear();
@@ -665,7 +671,15 @@ async function fetchAttendance() {
 
   try {
     let text = '', worked = false, lastErr = '';
-    const strategies = [
+    const isDaily = currentTab === 'daily';
+    const strategies = isDaily ? [
+      // Daily: only GET strategies since POST proxy strips body
+      ['GET corsproxy',   () => tryFetch('https://corsproxy.io/?' + encodeURIComponent(getUrl), {method:'GET'})],
+      ['GET allorigins',  () => tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(getUrl), {method:'GET'})],
+      ['GET codetabs',    () => tryFetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(getUrl), {method:'GET'})],
+      ['POST corsproxy',  () => tryFetch('https://corsproxy.io/?' + encodeURIComponent(targetUrl), postOpts)],
+      ['POST allorigins', () => tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl), postOpts)],
+    ] : [
       ['POST corsproxy',  () => tryFetch('https://corsproxy.io/?' + encodeURIComponent(targetUrl), postOpts)],
       ['POST allorigins', () => tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl), postOpts)],
       ['GET corsproxy',   () => tryFetch('https://corsproxy.io/?' + encodeURIComponent(getUrl), {method:'GET'})],
@@ -717,6 +731,11 @@ async function fetchAttendance() {
 }
 
 document.getElementById('dateInput').value = new Date().toISOString().split('T')[0];
+// Make sure date is always set
+setInterval(() => {
+  if (!document.getElementById('dateInput').value)
+    document.getElementById('dateInput').value = new Date().toISOString().split('T')[0];
+}, 500);
 document.getElementById('rollno').addEventListener('keydown', e => { if (e.key === 'Enter') fetchAttendance(); });
 loadPreferences();
 
