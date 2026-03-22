@@ -579,17 +579,20 @@ async function fetchAttendance() {
   document.getElementById('fetchBtn').disabled = true;
 
   const base = 'https://sxcran.ac.in/Student/';
-  let dateStr = '';
-  if (currentTab === 'daily' || currentTab === 'monthly') {
-    const d = document.getElementById('dateInput').value ? new Date(document.getElementById('dateInput').value) : new Date();
-    dateStr = (d.getMonth()+1) + '/' + d.getDate() + '/' + d.getFullYear();
-  }
-
   const endpointMap = {overall:'showOverallAttendance', monthly:'showMonthlyAttendance', daily:'showDailyAttendance'};
   const params = new URLSearchParams();
   params.append('examRollNo', roll);
   params.append('semester', selectedSem);
-  if (dateStr) params.append('date', dateStr);
+
+  if (currentTab === 'daily') {
+    // daily uses 'adNew' param in YYYY-MM-DD format
+    const dateVal = document.getElementById('dateInput').value || new Date().toISOString().split('T')[0];
+    params.append('adNew', dateVal);
+  } else if (currentTab === 'monthly') {
+    // monthly uses 'date' param in M/D/YYYY format
+    const d = document.getElementById('dateInput').value ? new Date(document.getElementById('dateInput').value) : new Date();
+    params.append('date', (d.getMonth()+1) + '/' + d.getDate() + '/' + d.getFullYear());
+  }
 
   const targetUrl = base + endpointMap[currentTab];
   const getUrl = targetUrl + '?' + params.toString();
