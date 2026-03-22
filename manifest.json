@@ -2,7 +2,7 @@
   "name": "SXC Attendance",
   "short_name": "SXC Attend",
   "description": "St. Xavier's College Ranchi \u2014 Attendance Checker",
-  "start_url": "./",
+  "start_url": "/sxc_atttendence/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0f2557",
@@ -21,5 +21,5 @@
       "purpose": "any maskable"
     }
   ],
-  "scope": "./"
+  "scope": "/sxc_atttendence/"
 }

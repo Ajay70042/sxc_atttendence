@@ -1,14 +1,16 @@
-const CACHE = 'sxc-attend-v2';
+const CACHE = 'sxc-attend-v3';
+const BASE = '/sxc_atttendence/';
+const ASSETS = [
+  BASE,
+  BASE + 'index.html',
+  BASE + 'manifest.json',
+  BASE + 'icon-192.png',
+  BASE + 'icon-512.png',
+];
 
 self.addEventListener('install', e => {
   e.waitUntil(
-    caches.open(CACHE).then(c => c.addAll([
-      './',
-      './index.html',
-      './manifest.json',
-      './icon-192.png',
-      './icon-512.png',
-    ]))
+    caches.open(CACHE).then(c => c.addAll(ASSETS))
   );
   self.skipWaiting();
 });
@@ -23,18 +25,19 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
-  // Only handle same-origin requests, skip external API calls
-  if (!e.request.url.startsWith(self.location.origin)) return;
+  // Skip cross-origin requests (API calls to college server / proxies)
+  if (!e.request.url.includes('ajay70042.github.io')) return;
+
   e.respondWith(
     caches.match(e.request).then(cached => {
-      return cached || fetch(e.request).then(res => {
-        // Cache successful responses
+      if (cached) return cached;
+      return fetch(e.request).then(res => {
         if (res && res.status === 200) {
           const clone = res.clone();
           caches.open(CACHE).then(c => c.put(e.request, clone));
         }
         return res;
       });
-    }).catch(() => caches.match('./index.html'))
+    }).catch(() => caches.match(BASE + 'index.html'))
   );
 });
