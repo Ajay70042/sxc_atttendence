@@ -640,13 +640,13 @@ async function fetchAttendance() {
   params.append('semester', selectedSem);
 
   if (currentTab === 'daily') {
-    // daily uses 'adNew' param in YYYY-MM-DD format
     const dateVal = document.getElementById('dateInput').value || new Date().toISOString().split('T')[0];
     params.append('adNew', dateVal);
+    console.log('Daily params:', params.toString());
   } else if (currentTab === 'monthly') {
-    // monthly uses 'date' param in M/D/YYYY format
     const d = document.getElementById('dateInput').value ? new Date(document.getElementById('dateInput').value) : new Date();
-    params.append('date', (d.getMonth()+1) + '/' + d.getDate() + '/' + d.getFullYear());
+    const dateStr = (d.getMonth()+1) + '/' + d.getDate() + '/' + d.getFullYear();
+    params.append('date', dateStr);
   }
 
   const targetUrl = base + endpointMap[currentTab];
@@ -657,7 +657,8 @@ async function fetchAttendance() {
     const res = await fetch(url, opts);
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const t = await res.text();
-    if (!t || t.trim() === '' || t.trim() === 'null') throw new Error('Empty response');
+    if (!t || t.trim() === '') throw new Error('Empty response');
+    if (t.trim() === 'null' || t.trim() === 'undefined') throw new Error('Null response');
     if (t.trim().startsWith('<!') || t.trim().startsWith('<html')) throw new Error('HTML response');
     return t;
   }
@@ -681,7 +682,7 @@ async function fetchAttendance() {
     try { data = JSON.parse(text); } catch(e) { throw new Error('Bad response: ' + text.substring(0,120)); }
 
     document.getElementById('loader').classList.remove('visible');
-    if (!data || (Array.isArray(data) && data.length === 0)) { showError('No data found. Verify your roll number and semester.'); return; }
+    if (data === null || data === undefined || (Array.isArray(data) && data.length === 0)) { showError('No data found. Verify your roll number and semester.'); return; }
 
     fillStudentCard(data);
     const rows = normalize(data);
