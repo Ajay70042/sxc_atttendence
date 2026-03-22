@@ -807,34 +807,41 @@ async function fetchAttendance() {
 
   const targetUrl = base + endpointMap[currentTab];
 
-  const proxies = [
-    'https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl),
-    'https://corsproxy.io/?' + encodeURIComponent(targetUrl),
-    'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(targetUrl),
-  ];
-
-  const postOpts = {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
-    body: params.toString(),
-  };
+  async function tryFetch(url, opts) {
+    const res = await fetch(url, opts);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const t = await res.text();
+    if (!t || t.trim() === '' || t.trim() === 'null') throw new Error('Empty response');
+    if (t.trim().startsWith('<!') || t.trim().startsWith('<html')) throw new Error('HTML response - blocked');
+    return t;
+  }
 
   try {
     let text = '';
     let worked = false;
-    let lastErr = 'No proxy worked';
-    for (const proxyUrl of proxies) {
-      try {
-        const res = await fetch(proxyUrl, postOpts);
-        if (res.ok) {
-          const t = await res.text();
-          if (t && t.trim() !== '' && t.trim() !== 'null' && !t.trim().startsWith('<')) {
-            text = t; worked = true; break;
-          } else { lastErr = 'Empty or HTML response'; }
-        } else { lastErr = 'HTTP ' + res.status; }
-      } catch(e) { lastErr = e.message; }
+    let lastErr = '';
+    const postOpts = {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
+      body: params.toString()
+    };
+    const getUrl = targetUrl + '?' + params.toString();
+
+    const strategies = [
+      ['POST via corsproxy.io',   () => tryFetch('https://corsproxy.io/?' + encodeURIComponent(targetUrl), postOpts)],
+      ['POST via allorigins',     () => tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl), postOpts)],
+      ['GET via corsproxy.io',    () => tryFetch('https://corsproxy.io/?' + encodeURIComponent(getUrl), {method:'GET'})],
+      ['GET via allorigins',      () => tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(getUrl), {method:'GET'})],
+      ['GET via codetabs',        () => tryFetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(getUrl), {method:'GET'})],
+    ];
+
+    for (const [name, fn] of strategies) {
+      try { text = await fn(); worked = true; console.log('Success:', name); break; }
+      catch(e) { lastErr += name + ': ' + e.message + ' | '; console.warn('Failed:', name, e.message); }
     }
-    if (!worked) throw new Error('Could not reach college server. ' + lastErr + '. Please share the cURL from DevTools.');
+
+    if (!worked) throw new Error('All proxies failed. Details: ' + lastErr);
+
     let data;
     try { data = JSON.parse(text); } catch(e) { throw new Error('Unexpected response: ' + text.substring(0, 150)); }
 
