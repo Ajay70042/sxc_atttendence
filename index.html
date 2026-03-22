@@ -673,7 +673,12 @@ async function fetchAttendance() {
       ['GET codetabs',    () => tryFetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(getUrl), {method:'GET'})],
     ];
     for (const [name, fn] of strategies) {
-      try { text = await fn(); worked = true; break; }
+      try {
+        document.querySelector('.loader-text').textContent = 'Trying ' + name + '...';
+        text = await fn(); worked = true;
+        document.querySelector('.loader-text').textContent = 'Got data!';
+        break;
+      }
       catch(e) { lastErr += name + ': ' + e.message + ' | '; }
     }
     if (!worked) throw new Error('All proxies failed: ' + lastErr);
@@ -682,6 +687,7 @@ async function fetchAttendance() {
     try { data = JSON.parse(text); } catch(e) { throw new Error('Bad response: ' + text.substring(0,120)); }
 
     document.getElementById('loader').classList.remove('visible');
+    document.querySelector('.loader-text').textContent = 'Fetching your attendance...';
     if (data === null || data === undefined || (Array.isArray(data) && data.length === 0)) { showError('No data found. Verify your roll number and semester.'); return; }
 
     fillStudentCard(data);
