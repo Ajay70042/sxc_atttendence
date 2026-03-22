@@ -657,7 +657,13 @@ async function fetchAttendance() {
 
   const targetUrl = base + endpointMap[currentTab];
   const getUrl = targetUrl + '?' + params.toString();
-  const postOpts = { method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded','X-Requested-With':'XMLHttpRequest'}, body:params.toString() };
+  const postOpts = { method:'POST', headers:{
+    'Content-Type':'application/x-www-form-urlencoded',
+    'X-Requested-With':'XMLHttpRequest',
+    'Cookie':'perf_dv6Tr4n=1',
+    'Referer':'https://sxcran.ac.in/Student/AttendanceSummary',
+    'Origin':'https://sxcran.ac.in',
+  }, body:params.toString() };
 
   async function tryFetch(url, opts) {
     const res = await fetch(url, opts);
