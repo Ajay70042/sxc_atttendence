@@ -557,7 +557,7 @@ body {
     <div class="glass-card">
       <div class="form-group">
         <label class="form-label">Form No. / Exam Roll No.</label>
-        <input class="form-input" type="text" id="rollno" placeholder="e.g. 24VBCA057170" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false">
+        <input class="form-input" type="text" id="rollno" placeholder="e.g. 24VBCA05XXXX" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false">
         <div class="saved-tag" id="savedTag">✓ Roll number saved</div>
       </div>
       <div class="form-group">
@@ -681,7 +681,7 @@ body {
     </div>
     <div class="panel-item" style="cursor:pointer" onclick="clearSaved()">
       <div><div class="panel-item-label">Clear Saved Data</div><div class="panel-item-sub">Remove saved roll number & semester</div></div>
-      <span style="font-size:18px">🗑️</span>
+      <span style="font-size:18px">❌</span>
     </div>
   </div>
 
@@ -693,23 +693,25 @@ body {
     </div>
   </div>
 
-  <div class="panel-section">
-    <div class="panel-section-label">Backend Server</div>
-    <div class="panel-item" style="flex-direction:column;align-items:flex-start;gap:10px">
-      <div><div class="panel-item-label">Backend URL</div><div class="panel-item-sub">Render.com URL for daily attendance</div></div>
-      <input class="form-input" type="url" id="backendInput" placeholder="https://your-app.onrender.com" style="font-size:13px">
-      <button onclick="saveBackend()" style="background:linear-gradient(135deg,var(--p1),var(--p3));color:#fff;border:none;border-radius:var(--radius-xs);padding:10px 16px;font-family:Syne,sans-serif;font-size:13px;font-weight:700;cursor:pointer;width:100%">Save Backend URL</button>
-    </div>
-  </div>
+
 
   <div class="panel-section">
     <div class="panel-section-label">About</div>
     <div class="panel-item">
-      <div><div class="panel-item-label">SXC Attendance App</div><div class="panel-item-sub">St. Xavier's College, Ranchi · v3.0</div></div>
+      <div><div class="panel-item-label">SXC Attendance App</div><div class="panel-item-sub">St. Xavier's College, Ranchi </div></div>
     </div>
   </div>
-</div>
+   <div class="panel-section">
+    <div class="panel-section-label">Devloper</div>
+    <div class="panel-item">
+      <div><div class="panel-item-label">AJAY</div><div class="panel-item-sub">github-https://github.com/Ajay70042</div></div>
+    </div>
+  </div>
+  
 
+
+</div>
+ 
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 
