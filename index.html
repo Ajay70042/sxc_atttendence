@@ -683,28 +683,30 @@ function buildSubjectCards(rows, pctKey, labelKey, subKey) {
   let lowSubjects = [];
 
   rows.forEach((row, i) => {
-    const name = row[labelKey] || row['SubjectName'] || row['Subject'] || `Subject ${i+1}`;
-    const sub = subKey ? (row[subKey] || '') : '';
-    const pctRaw = row[pctKey] || row['Percentage'] || row['AttendancePercentage'] || row['Percent'] || '';
+    const name = row['subjectTitle'] || row[labelKey] || 'Subject ' + (i+1);
+    const code = row['subjectCode'] || (subKey ? row[subKey] : '') || '';
+    const pctRaw = row['percentage'] || row[pctKey] || '';
+    const totalClasses = row['totalClasses'] || '';
+    const totalPresent = row['totalPresent'] || '';
     const pct = parseFloat(pctRaw);
     const cls = isNaN(pct) ? 'green' : pctClass(pct);
-    const display = isNaN(pct) ? (pctRaw || '—') : Math.round(pct) + '%';
+    const display = isNaN(pct) ? (pctRaw || '—') : parseFloat(pctRaw).toFixed(1) + '%';
+    const classInfo = (totalPresent && totalClasses) ? totalPresent + ' / ' + totalClasses + ' classes' : '';
 
     if (!isNaN(pct)) {
       if (pct >= 75) good++;
       else if (pct >= 60) warn++;
-      else { bad++; lowSubjects.push(name); }
+      else { bad++; lowSubjects.push(name.split('[')[0].trim()); }
     }
 
     const delay = i * 0.05;
-    html += `
-      <div class="subject-card" style="animation-delay:${delay}s">
-        <div class="subject-info">
-          <div class="subject-name">${name}</div>
-          ${sub ? `<div class="subject-sub">${sub}</div>` : ''}
-        </div>
-        <div class="pct-circle ${cls}">${display}</div>
-      </div>`;
+    html += '<div class="subject-card" style="animation-delay:' + delay + 's">'
+      + '<div class="subject-info">'
+      + '<div class="subject-name">' + name + '</div>'
+      + '<div class="subject-sub">' + code + (classInfo ? ' · ' + classInfo : '') + '</div>'
+      + '</div>'
+      + '<div class="pct-circle ' + cls + '">' + display + '</div>'
+      + '</div>';
   });
 
   document.getElementById('resultsBody').innerHTML = html;
@@ -759,10 +761,10 @@ function normalize(data) {
 function fillStudentCard(data) {
   const rows = Array.isArray(data) ? data : [data];
   const first = rows[0] || {};
-  const name = first.StudentName || first.Name || '—';
-  const course = first.CourseName || first.Course || '—';
-  const roll = first.ClassRollNo || first.RollNo || document.getElementById('rollno').value;
-  const sem = first.Semester || selectedSem;
+  const name = first.student_Name || first.StudentName || first.Name || '—';
+  const course = first.course_Name || first.CourseName || first.Course || '—';
+  const roll = first.classRoll_No || first.ClassRollNo || first.RollNo || document.getElementById('rollno').value;
+  const sem = first.semester || first.Semester || selectedSem;
   if (name !== '—') {
     document.getElementById('sName').textContent = name;
     document.getElementById('sCourse').textContent = course;
@@ -781,7 +783,6 @@ async function fetchAttendance() {
   document.getElementById('loader').classList.add('visible');
   document.getElementById('fetchBtn').disabled = true;
 
-  const PROXY = 'https://corsproxy.io/?';
   const base = 'https://sxcran.ac.in/Student/';
 
   let dateStr = '';
@@ -789,38 +790,53 @@ async function fetchAttendance() {
     const d = document.getElementById('dateInput').value
       ? new Date(document.getElementById('dateInput').value)
       : new Date();
-    dateStr = `${d.getMonth()+1}/${d.getDate()}/${d.getFullYear()}`;
+    const dObj = d ? new Date(d) : new Date();
+    dateStr = (dObj.getMonth()+1) + '/' + dObj.getDate() + '/' + dObj.getFullYear();
   }
 
-  const endpointNames = {
+  const endpointMap = {
     overall: 'showOverallAttendance',
     monthly: 'showMonthlyAttendance',
     daily:   'showDailyAttendance',
   };
 
-  const url = PROXY + encodeURIComponent(base + endpointNames[currentTab]);
+  const params = new URLSearchParams();
+  params.append('examRollNo', roll);
+  params.append('semester', selectedSem);
+  if (dateStr) params.append('date', dateStr);
 
-  // POST body
-  const formData = new URLSearchParams();
-  formData.append('FormNo', roll);
-  formData.append('Semester', selectedSem);
-  if (dateStr) formData.append('Date', dateStr);
+  const targetUrl = base + endpointMap[currentTab];
+
+  const proxies = [
+    'https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl),
+    'https://corsproxy.io/?' + encodeURIComponent(targetUrl),
+    'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(targetUrl),
+  ];
+
+  const postOpts = {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
+    body: params.toString(),
+  };
 
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'X-Requested-With': 'XMLHttpRequest',
-        'Referer': 'https://sxcran.ac.in/Student/AttendanceSummary',
-      },
-      body: formData.toString(),
-    });
-
-    if (!res.ok) throw new Error(`Server error ${res.status} — endpoint may be wrong.`);
-    const text = await res.text();
+    let text = '';
+    let worked = false;
+    let lastErr = 'No proxy worked';
+    for (const proxyUrl of proxies) {
+      try {
+        const res = await fetch(proxyUrl, postOpts);
+        if (res.ok) {
+          const t = await res.text();
+          if (t && t.trim() !== '' && t.trim() !== 'null' && !t.trim().startsWith('<')) {
+            text = t; worked = true; break;
+          } else { lastErr = 'Empty or HTML response'; }
+        } else { lastErr = 'HTTP ' + res.status; }
+      } catch(e) { lastErr = e.message; }
+    }
+    if (!worked) throw new Error('Could not reach college server. ' + lastErr + '. Please share the cURL from DevTools.');
     let data;
-    try { data = JSON.parse(text); } catch { throw new Error(`Server sent unexpected response: ${text.substring(0, 120)}`); }
+    try { data = JSON.parse(text); } catch(e) { throw new Error('Unexpected response: ' + text.substring(0, 150)); }
 
     document.getElementById('loader').classList.remove('visible');
 
@@ -839,16 +855,17 @@ async function fetchAttendance() {
     };
     document.getElementById('resultsLabel').textContent = labelMap[currentTab];
 
-    // Try to find percentage & subject keys
-    const allKeys = rows.length > 0 ? Object.keys(rows[0]) : [];
-    const pctKey = allKeys.find(k => k.toLowerCase().includes('percent') || k.toLowerCase().includes('pct')) || allKeys[allKeys.length - 1];
-    const labelKey = allKeys.find(k => k.toLowerCase().includes('subject') || k.toLowerCase().includes('name') || k.toLowerCase().includes('course')) || allKeys[0];
-    const subKey = allKeys.find(k => k.toLowerCase().includes('code') || k.toLowerCase().includes('type'));
-
-    if (pctKey && rows.length > 0) {
-      buildSubjectCards(rows, pctKey, labelKey, subKey);
-    } else {
-      buildGenericTable(rows);
+    if (rows.length > 0) {
+      const first = rows[0];
+      // Use exact API field names
+      const pctKey = 'percentage' in first ? 'percentage' : Object.keys(first).find(k => k.toLowerCase().includes('percent')) || '';
+      const labelKey = 'subjectTitle' in first ? 'subjectTitle' : Object.keys(first).find(k => k.toLowerCase().includes('subject') || k.toLowerCase().includes('name')) || '';
+      const subKey = 'subjectCode' in first ? 'subjectCode' : null;
+      if (pctKey) {
+        buildSubjectCards(rows, pctKey, labelKey, subKey);
+      } else {
+        buildGenericTable(rows);
+      }
     }
 
     document.getElementById('resultsSection').classList.add('visible');
