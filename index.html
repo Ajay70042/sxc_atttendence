@@ -428,6 +428,10 @@ function clearResults() {
   ['studentCard','resultsSection','warningBanner','errorCard'].forEach(id => document.getElementById(id).classList.remove('visible'));
   document.getElementById('statsRow').style.display = 'none';
   document.getElementById('resultsBody').innerHTML = '';
+  // Reset stat labels to defaults
+  document.getElementById('statsRow').children[0].querySelector('.stat-label').textContent = '≥75%';
+  document.getElementById('statsRow').children[1].querySelector('.stat-label').textContent = '60–74%';
+  document.getElementById('statsRow').children[2].querySelector('.stat-label').textContent = '<60%';
 }
 
 function clearAll() {
@@ -516,6 +520,57 @@ function buildSubjectCards(rows, pctKey, labelKey, subKey) {
       lowSubjects.length + ' subject(s) below 75%: ' + lowSubjects.join(', ') + '. Check the red chips on each subject card.';
     document.getElementById('warningBanner').classList.add('visible');
   }
+}
+
+function buildDailyCards(rows) {
+  if (!rows || rows.length === 0) { showError('No attendance data for this date.'); return; }
+
+  let present = 0, absent = 0, html = '';
+  const dateLabel = rows[0].dateOf_attendance
+    ? rows[0].dateOf_attendance.split(' ')[0]
+    : document.getElementById('dateInput').value;
+
+  rows.forEach((row, i) => {
+    const name = row['subjectTitle'] || 'Subject ' + (i+1);
+    const code = row['subjectCode'] || '';
+    const period = row['period'] || '';
+    const att = (row['attendance'] || '').trim().toUpperCase();
+    const isPresent = att === 'P';
+    if (isPresent) present++; else absent++;
+
+    const badgeColor = isPresent ? 'var(--green)' : 'var(--red)';
+    const badgeBg = isPresent ? 'var(--green-bg)' : 'var(--red-bg)';
+    const badgeText = isPresent ? 'Present' : 'Absent';
+    const icon = isPresent ? '✓' : '✗';
+
+    html += '<div class="subject-card" style="animation-delay:' + (i*0.05) + 's">'
+      + '<div class="subject-main">'
+      + '<div class="subject-info">'
+      + '<div class="subject-name">' + name + '</div>'
+      + '<div class="subject-sub">' + code + (period ? '  ·  ' + period : '') + '</div>'
+      + '</div>'
+      + '<div style="display:flex;align-items:center;justify-content:center;width:54px;height:54px;border-radius:50%;background:' + badgeBg + ';color:' + badgeColor + ';font-size:20px;font-weight:700;flex-shrink:0">' + icon + '</div>'
+      + '</div>'
+      + '</div>';
+  });
+
+  // Summary strip
+  const total = present + absent;
+  html = '<div style="background:var(--card);border-radius:var(--radius-sm);border:1px solid var(--border);padding:14px 16px;margin-bottom:14px;display:flex;gap:16px;align-items:center">'
+    + '<div style="font-size:13px;color:var(--text-muted);flex:1">📅 ' + dateLabel + '</div>'
+    + '<div style="font-size:13px;font-weight:600;color:var(--green)">' + present + ' Present</div>'
+    + '<div style="font-size:13px;font-weight:600;color:var(--red)">' + absent + ' Absent</div>'
+    + '</div>' + html;
+
+  document.getElementById('resultsBody').innerHTML = html;
+  document.getElementById('statGood').textContent = present;
+  document.getElementById('statWarn').textContent = total;
+  document.getElementById('statBad').textContent = absent;
+  document.getElementById('statsRow').style.display = 'grid';
+  // Update stat labels for daily view
+  document.getElementById('statsRow').children[0].querySelector('.stat-label').textContent = 'Present';
+  document.getElementById('statsRow').children[1].querySelector('.stat-label').textContent = 'Total';
+  document.getElementById('statsRow').children[2].querySelector('.stat-label').textContent = 'Absent';
 }
 
 function buildGenericTable(rows) {
@@ -635,10 +690,14 @@ async function fetchAttendance() {
 
     if (rows.length > 0) {
       const first = rows[0];
-      const pctKey = 'percentage' in first ? 'percentage' : Object.keys(first).find(k => k.toLowerCase().includes('percent')) || '';
-      const labelKey = 'subjectTitle' in first ? 'subjectTitle' : Object.keys(first).find(k => k.toLowerCase().includes('subject') || k.toLowerCase().includes('name')) || '';
-      const subKey = 'subjectCode' in first ? 'subjectCode' : null;
-      pctKey ? buildSubjectCards(rows, pctKey, labelKey, subKey) : buildGenericTable(rows);
+      if (currentTab === 'daily') {
+        buildDailyCards(rows);
+      } else {
+        const pctKey = 'percentage' in first ? 'percentage' : Object.keys(first).find(k => k.toLowerCase().includes('percent')) || '';
+        const labelKey = 'subjectTitle' in first ? 'subjectTitle' : Object.keys(first).find(k => k.toLowerCase().includes('subject') || k.toLowerCase().includes('name')) || '';
+        const subKey = 'subjectCode' in first ? 'subjectCode' : null;
+        pctKey ? buildSubjectCards(rows, pctKey, labelKey, subKey) : buildGenericTable(rows);
+      }
     }
     document.getElementById('resultsSection').classList.add('visible');
 
