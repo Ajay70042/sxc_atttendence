@@ -33,7 +33,7 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   // Skip cross-origin requests
-  if (!e.request.url.includes('ajay70042.github.io')) return;
+  if (!e.request.url.startsWith(self.location.origin)) return;
 
   e.respondWith(
     // Network first — always get fresh content

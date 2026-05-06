@@ -9,6 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="SXC Attend">
 <title>SXC Attendance</title>
+<link rel="icon" href="icon-192.png" type="image/png">
 <link rel="manifest" href="manifest.json">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -1104,8 +1105,10 @@ async function fetchAttendance() {
     if (!res.ok) throw new Error('HTTP '+res.status);
     const t = await res.text();
     if (!t||t.trim()===''||t.trim()==='null'||t.trim()==='undefined') throw new Error('Empty response');
-    if (t.trim().startsWith('<!')||t.trim().startsWith('<html')) throw new Error('HTML response');
-    return t;
+    const trimmed = t.trim();
+    if (trimmed.startsWith('<!')||trimmed.startsWith('<html')||trimmed.startsWith('<')) throw new Error('HTML/XML response');
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) throw new Error('Not JSON response');
+    return trimmed;
   }
 
   try {
