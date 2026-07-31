@@ -1,9 +1,11 @@
 // Force update by changing cache version
-const CACHE = 'sxc-attend-v4';
+const CACHE = 'sxc-attend-v5';
 const BASE = '/sxc_atttendence/';
 const ASSETS = [
   BASE,
   BASE + 'index.html',
+  BASE + 'style.css',
+  BASE + 'script.js',
   BASE + 'manifest.json',
   BASE + 'icon-192.png',
   BASE + 'icon-512.png',
