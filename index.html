@@ -2059,15 +2059,24 @@
 
       if (currentTab === 'daily') showToast('Sending: ' + roll + ' · ' + dailyDate, 3000);
 
-      async function tryFetch(url, opts) {
-        const res = await fetch(url, opts);
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        const t = await res.text();
-        if (!t || t.trim() === '' || t.trim() === 'null' || t.trim() === 'undefined') throw new Error('Empty response');
-        const trimmed = t.trim();
-        if (trimmed.startsWith('<!') || trimmed.startsWith('<html') || trimmed.startsWith('<')) throw new Error('HTML/XML response');
-        if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) throw new Error('Not JSON response');
-        return trimmed;
+      async function tryFetch(url, opts, timeoutMs = 8000) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const res = await fetch(url, { ...opts, signal: controller.signal });
+          clearTimeout(timer);
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const t = await res.text();
+          if (!t || t.trim() === '' || t.trim() === 'null' || t.trim() === 'undefined') throw new Error('Empty response');
+          const trimmed = t.trim();
+          if (trimmed.startsWith('<!') || trimmed.startsWith('<html') || trimmed.startsWith('<')) throw new Error('HTML/XML response');
+          if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) throw new Error('Not JSON response');
+          return trimmed;
+        } catch (e) {
+          clearTimeout(timer);
+          if (e.name === 'AbortError') throw new Error('Timeout after ' + (timeoutMs/1000) + 's');
+          throw e;
+        }
       }
 
       async function fetchEndpoint(tab, params) {
@@ -2075,19 +2084,43 @@
         const getUrl = targetUrl + '?' + params.toString();
         const postOpts = { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' }, body: params.toString() };
         const strategies = [];
-        if (BACKEND) strategies.push(['Backend', () => tryFetch(BACKEND + '/attendance/' + tab, postOpts)]);
+        // Backend gets 35s — Render free tier cold start can take up to 30s
+        if (BACKEND) strategies.push(['Backend', () => tryFetch(BACKEND + '/attendance/' + tab, postOpts, 35000)]);
+        // Free CORS proxies get 8s each — they're fast or broken
         strategies.push(
-          ['POST corsproxy', () => tryFetch('https://corsproxy.io/?' + encodeURIComponent(targetUrl), postOpts)],
-          ['POST allorigins', () => tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl), postOpts)],
-          ['GET corsproxy', () => tryFetch('https://corsproxy.io/?' + encodeURIComponent(getUrl), { method: 'GET' })],
-          ['GET allorigins', () => tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(getUrl), { method: 'GET' })],
-          ['GET codetabs', () => tryFetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(getUrl), { method: 'GET' })],
+          ['POST corsproxy', () => tryFetch('https://corsproxy.io/?' + encodeURIComponent(targetUrl), postOpts, 8000)],
+          ['POST allorigins', () => tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl), postOpts, 8000)],
+          ['GET corsproxy', () => tryFetch('https://corsproxy.io/?' + encodeURIComponent(getUrl), { method: 'GET' }, 8000)],
+          ['GET allorigins', () => tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(getUrl), { method: 'GET' }, 8000)],
+          ['GET codetabs', () => tryFetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(getUrl), { method: 'GET' }, 8000)],
         );
         let text = '', worked = false, lastErr = '';
         for (const [name, fn] of strategies) {
           try {
-            document.getElementById('loaderText').textContent = 'Trying ' + name + '...';
-            text = await fn(); worked = true; break;
+            if (name === 'Backend') {
+              // Show a live countdown so the user knows the server is waking up
+              const loaderEl = document.getElementById('loaderText');
+              let secs = 35;
+              loaderEl.textContent = window._backendReady
+                ? 'Connecting to backend...'
+                : '⏳ Waking up server... ' + secs + 's';
+              const countInterval = !window._backendReady ? setInterval(() => {
+                secs--;
+                if (secs > 0) loaderEl.textContent = '⏳ Waking up server... ' + secs + 's';
+                else clearInterval(countInterval);
+              }, 1000) : null;
+              try {
+                text = await fn();
+                if (countInterval) clearInterval(countInterval);
+                worked = true; break;
+              } catch(e) {
+                if (countInterval) clearInterval(countInterval);
+                throw e;
+              }
+            } else {
+              document.getElementById('loaderText').textContent = 'Trying ' + name + '...';
+              text = await fn(); worked = true; break;
+            }
           } catch (e) { lastErr += name + ': ' + e.message + ' | '; }
         }
         if (!worked) throw new Error('All proxies failed: ' + lastErr);
@@ -2274,6 +2307,29 @@
     document.getElementById('dateInput').value = new Date().toISOString().split('T')[0];
     document.getElementById('rollno').addEventListener('keydown', e => { if (e.key === 'Enter') fetchAttendance(); });
     loadPreferences();
+
+    // Wake up the Render backend on page load with retries.
+    // Render free tier sleeps after ~15 min — we keep pinging until it wakes, so the user
+    // doesn't have to wait when they tap Fetch.
+    window._backendReady = false;
+    (async function warmUpBackend() {
+      const backendUrl = localStorage.getItem('sxc_backend') || 'https://sxc-backend-1.onrender.com';
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        try {
+          const r = await fetch(backendUrl + '/health', { method: 'GET', signal: AbortSignal.timeout(20000) });
+          if (r.ok) {
+            window._backendReady = true;
+            console.log('[SXC] Backend warmed up ✅ (attempt ' + attempt + ')');
+            return;
+          }
+        } catch (e) {
+          console.log('[SXC] Warm-up attempt ' + attempt + ' pending...');
+        }
+        // Wait 10s before next retry
+        if (attempt < 5) await new Promise(res => setTimeout(res, 10000));
+      }
+      console.log('[SXC] Backend warm-up: server may still be cold');
+    })();
 
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => { navigator.serviceWorker.register('/sxc_atttendence/sw.js').catch(() => { }); });
