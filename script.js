@@ -190,10 +190,18 @@
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       el.classList.add('active');
       const dg = document.getElementById('dateGroup');
+      const mg = document.getElementById('monthGroup');
       if (tab === 'daily') {
-        dg.classList.add('visible');
+        dg.classList.add('visible'); mg.classList.remove('visible');
         if (!document.getElementById('dateInput').value) document.getElementById('dateInput').value = new Date().toISOString().split('T')[0];
-      } else { dg.classList.remove('visible'); }
+      } else if (tab === 'monthly') {
+        mg.classList.add('visible'); dg.classList.remove('visible');
+        if (!document.getElementById('monthInput').value) {
+          const n = new Date(); document.getElementById('monthInput').value = n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0');
+        }
+      } else {
+        dg.classList.remove('visible'); mg.classList.remove('visible');
+      }
       const labels = { overall: 'Check Overall Attendance', monthly: 'Check Monthly Attendance', daily: 'Check Daily Attendance' };
       document.getElementById('fetchLabel').textContent = labels[tab];
       clearResults();
@@ -480,9 +488,12 @@
       overallParams.append('examRollNo', roll); overallParams.append('semester', selectedSem);
 
       const now = new Date();
+      // Use selected month from picker (or current month as fallback)
+      const monthInputVal = document.getElementById('monthInput').value; // 'YYYY-MM'
+      const monthDate = monthInputVal ? new Date(monthInputVal + '-15') : now;
       const monthlyParams = new URLSearchParams();
       monthlyParams.append('examRollNo', roll); monthlyParams.append('semester', selectedSem);
-      monthlyParams.append('date', (now.getMonth() + 1) + '/' + now.getDate() + '/' + now.getFullYear());
+      monthlyParams.append('date', (monthDate.getMonth() + 1) + '/15/' + monthDate.getFullYear());
 
       const dailyDate = document.getElementById('dateInput').value || now.toISOString().split('T')[0];
       const dailyParams = new URLSearchParams();
@@ -517,44 +528,21 @@
         const targetUrl = base + endpointMap[tab];
         const getUrl = targetUrl + '?' + params.toString();
         const postOpts = { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' }, body: params.toString() };
-        const strategies = [];
-        // Backend gets 35s — Render free tier cold start can take up to 30s
-        if (BACKEND) strategies.push(['Backend', () => tryFetch(BACKEND + '/attendance/' + tab, postOpts, 35000)]);
-        // Free CORS proxies get 8s each
-        strategies.push(
-          ['POST corsproxy', () => tryFetch('https://corsproxy.io/?' + encodeURIComponent(targetUrl), postOpts, 8000)],
-          ['POST allorigins', () => tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl), postOpts, 8000)],
-          ['GET corsproxy', () => tryFetch('https://corsproxy.io/?' + encodeURIComponent(getUrl), { method: 'GET' }, 8000)],
-          ['GET allorigins', () => tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(getUrl), { method: 'GET' }, 8000)],
-          ['GET codetabs', () => tryFetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(getUrl), { method: 'GET' }, 8000)],
-        );
-        let text = '', worked = false, lastErr = '';
-        for (const [name, fn] of strategies) {
-          try {
-            if (name === 'Backend') {
-              const loaderEl = document.getElementById('loaderText');
-              let secs = 35;
-              loaderEl.textContent = window._backendReady ? 'Connecting to backend...' : '⏳ Waking up server... ' + secs + 's';
-              const countInterval = !window._backendReady ? setInterval(() => {
-                secs--;
-                if (secs > 0) loaderEl.textContent = '⏳ Waking up server... ' + secs + 's';
-                else clearInterval(countInterval);
-              }, 1000) : null;
-              try {
-                text = await fn();
-                if (countInterval) clearInterval(countInterval);
-                worked = true; break;
-              } catch(e) {
-                if (countInterval) clearInterval(countInterval);
-                throw e;
-              }
-            } else {
-              document.getElementById('loaderText').textContent = 'Trying ' + name + '...';
-              text = await fn(); worked = true; break;
-            }
-          } catch (e) { lastErr += name + ': ' + e.message + ' | '; }
-        }
-        if (!worked) throw new Error('All proxies failed: ' + lastErr);
+        const loaderEl = document.getElementById('loaderText');
+        loaderEl.textContent = 'Fetching attendance...';
+
+        // Fire backend + ALL proxies simultaneously — first valid response wins
+        // Backend should win every time now that it's kept warm by cron-job.org
+        const candidates = [
+          tryFetch(BACKEND + '/attendance/' + tab, postOpts, 6000),                                                       // 🏆 Backend (warm, fastest)
+          tryFetch('https://corsproxy.io/?' + encodeURIComponent(targetUrl), postOpts, 8000),                             // Fallback 1
+          tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl), postOpts, 8000),                // Fallback 2
+          tryFetch('https://corsproxy.io/?' + encodeURIComponent(getUrl), { method: 'GET' }, 8000),                      // Fallback 3
+          tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(getUrl), { method: 'GET' }, 8000),         // Fallback 4
+          tryFetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(getUrl), { method: 'GET' }, 8000),   // Fallback 5
+        ];
+
+        const text = await Promise.any(candidates);
         return JSON.parse(text);
       }
 
@@ -575,7 +563,21 @@
             const monthlyRows = normalize(monthlyData);
             // Keep only rows that have a subjectTitle (subject-wise rows, not aggregate)
             const subjectWise = monthlyRows.filter(r => r['subjectTitle'] || r['subjectCode']);
-            if (subjectWise.length > 0) subjectRows = subjectWise;
+
+            // Deduplicate: monthly API returns one row per class session per day.
+            // Group by subjectCode (or subjectTitle) and keep the row with the
+            // highest totalClasses — that's the most complete/up-to-date record.
+            if (subjectWise.length > 0) {
+              const subjectMap = new Map();
+              subjectWise.forEach(r => {
+                const key = r['subjectCode'] || r['subjectTitle'] || '';
+                const existing = subjectMap.get(key);
+                const currentTotal = parseInt(r['totalClasses']) || 0;
+                const existingTotal = existing ? (parseInt(existing['totalClasses']) || 0) : -1;
+                if (!existing || currentTotal > existingTotal) subjectMap.set(key, r);
+              });
+              subjectRows = Array.from(subjectMap.values());
+            }
           } catch (e) {
             console.log('[SXC] Monthly fetch failed (will show overall only):', e.message);
           }
@@ -610,8 +612,29 @@
 
         } else {
           // monthly
-          const rows = normalize(data);
-          if (rows.length > 0) {
+          const allRows = normalize(data);
+          if (allRows.length > 0) {
+            const subjectWise = allRows.filter(r => r['subjectTitle'] || r['subjectCode']);
+
+            // Deduplicate: API returns one row per class session — group by subject,
+            // keep the row with the highest totalClasses (most complete record)
+            const subjectMap = new Map();
+            subjectWise.forEach(r => {
+              const key = r['subjectCode'] || r['subjectTitle'] || '';
+              const existing = subjectMap.get(key);
+              const currentTotal = parseInt(r['totalClasses']) || 0;
+              const existingTotal = existing ? (parseInt(existing['totalClasses']) || 0) : -1;
+              if (!existing || currentTotal > existingTotal) subjectMap.set(key, r);
+            });
+            const rows = subjectMap.size > 0 ? Array.from(subjectMap.values()) : allRows;
+
+            // Show selected month name in the section header
+            const monthDate2 = document.getElementById('monthInput').value
+              ? new Date(document.getElementById('monthInput').value + '-15')
+              : new Date();
+            const monthName = monthDate2.toLocaleString('default', { month: 'long', year: 'numeric' });
+            document.getElementById('resultsLabel').textContent = 'Monthly Attendance — ' + monthName;
+
             const first = rows[0];
             const pctKey = 'percentage' in first ? 'percentage' : Object.keys(first).find(k => k.toLowerCase().includes('percent')) || '';
             const labelKey = 'subjectTitle' in first ? 'subjectTitle' : Object.keys(first).find(k => k.toLowerCase().includes('subject') || k.toLowerCase().includes('name')) || '';
@@ -770,18 +793,6 @@
       window.addEventListener('load', () => { navigator.serviceWorker.register('/sxc_atttendence/sw.js').catch(() => { }); });
     }
 
-    // Wake up the Render backend on page load with retries.
-    // Render free tier sleeps after ~15 min — retry until awake.
-    window._backendReady = false;
-    (async function warmUpBackend() {
-      const backendUrl = localStorage.getItem('sxc_backend') || 'https://sxc-backend-1.onrender.com';
-      for (let attempt = 1; attempt <= 5; attempt++) {
-        try {
-          const r = await fetch(backendUrl + '/health', { method: 'GET', signal: AbortSignal.timeout(20000) });
-          if (r.ok) { window._backendReady = true; console.log('[SXC] Backend warmed up ✅ (attempt ' + attempt + ')'); return; }
-        } catch (e) { console.log('[SXC] Warm-up attempt ' + attempt + ' pending...'); }
-        if (attempt < 5) await new Promise(res => setTimeout(res, 10000));
-      }
-      console.log('[SXC] Backend warm-up: server may still be cold');
-    })();
+
+
   
