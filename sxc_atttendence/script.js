@@ -232,7 +232,7 @@
       <circle class="pct-ring-track" cx="28" cy="28" r="${R}"/>
       <circle class="pct-ring-fill ${cls}" cx="28" cy="28" r="${R}" stroke-dasharray="${C}" stroke-dashoffset="${offset}"/>
     </svg>
-    <div class="pct-ring-text">${Math.round(pct)}%</div>
+    <div class="pct-ring-text">${pct.toFixed(2)}%</div>
   </div>`;
     }
 
@@ -281,7 +281,7 @@
         if (!isNaN(pct)) {
           document.getElementById('statGood').textContent = totalPresent;
           document.getElementById('statWarn').textContent = totalClasses;
-          document.getElementById('statBad').textContent = Math.round(pct) + '%';
+          document.getElementById('statBad').textContent = pct.toFixed(2) + '%';
           document.getElementById('statLabel0').textContent = 'Present';
           document.getElementById('statLabel1').textContent = 'Total';
           document.getElementById('statLabel2').textContent = 'Overall';
@@ -667,7 +667,7 @@
             // Label
             + '<div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:rgba(240,240,255,0.5)">📊 Overall Total</div>'
             // Big percentage
-            + '<div style="font-size:52px;font-weight:800;line-height:1;font-family:Syne,sans-serif;color:' + clr + ';text-shadow:0 0 24px ' + clr + '55;">' + Math.round(pct) + '%</div>'
+            + '<div style="font-size:52px;font-weight:800;line-height:1;font-family:Syne,sans-serif;color:' + clr + ';text-shadow:0 0 24px ' + clr + '55;">' + pct.toFixed(2) + '%</div>'
             // Present / Total pills
             + '<div style="display:flex;gap:10px;justify-content:center;">'
             +   '<div style="background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);border-radius:20px;padding:6px 14px;font-size:13px;font-weight:600;color:#10b981;">✓ ' + totalPresent + ' Present</div>'
@@ -750,7 +750,7 @@
         if (!isNaN(pct)) {
           document.getElementById('statGood').textContent = totalPresent;
           document.getElementById('statWarn').textContent = totalClasses;
-          document.getElementById('statBad').textContent = Math.round(pct) + '%';
+          document.getElementById('statBad').textContent = pct.toFixed(2) + '%';
           document.getElementById('statLabel0').textContent = 'Present';
           document.getElementById('statLabel1').textContent = 'Total';
           document.getElementById('statLabel2').textContent = 'Overall';
@@ -770,18 +770,40 @@
       window.addEventListener('load', () => { navigator.serviceWorker.register('/sxc_atttendence/sw.js').catch(() => { }); });
     }
 
-    // Wake up the Render backend on page load with retries.
-    // Render free tier sleeps after ~15 min — retry until awake.
+    // Wake up the Render backend on page load.
+    // Render free tier sleeps after ~15 min — show a status bar while waiting.
     window._backendReady = false;
     (async function warmUpBackend() {
       const backendUrl = localStorage.getItem('sxc_backend') || 'https://sxc-backend-1.onrender.com';
-      for (let attempt = 1; attempt <= 5; attempt++) {
+      const bar  = document.getElementById('wakeBar');
+      const msg  = document.getElementById('wakeMsg');
+
+      // Quick probe first — if already warm, show nothing
+      try {
+        const r = await fetch(backendUrl + '/health', { method: 'GET', signal: AbortSignal.timeout(3000) });
+        if (r.ok) { window._backendReady = true; return; } // already warm, no banner needed
+      } catch (_) { /* cold — fall through */ }
+
+      // Show the banner and retry with longer timeouts
+      bar.style.display = 'flex';
+      for (let attempt = 1; attempt <= 6; attempt++) {
         try {
-          const r = await fetch(backendUrl + '/health', { method: 'GET', signal: AbortSignal.timeout(20000) });
-          if (r.ok) { window._backendReady = true; console.log('[SXC] Backend warmed up ✅ (attempt ' + attempt + ')'); return; }
-        } catch (e) { console.log('[SXC] Warm-up attempt ' + attempt + ' pending...'); }
-        if (attempt < 5) await new Promise(res => setTimeout(res, 10000));
+          msg.textContent = 'Waking up server… this takes ~30s after idle (' + attempt + '/6)';
+          const r = await fetch(backendUrl + '/health', { method: 'GET', signal: AbortSignal.timeout(15000) });
+          if (r.ok) {
+            window._backendReady = true;
+            msg.textContent = 'Server ready ✅';
+            bar.style.background = 'rgba(16,185,129,0.12)';
+            bar.style.borderColor = 'rgba(16,185,129,0.3)';
+            bar.style.color = '#10b981';
+            bar.querySelector('span').style.background = '#10b981';
+            setTimeout(() => { bar.style.display = 'none'; }, 2500);
+            return;
+          }
+        } catch (_) { /* still waking */ }
+        if (attempt < 6) await new Promise(res => setTimeout(res, 10000));
       }
-      console.log('[SXC] Backend warm-up: server may still be cold');
+      msg.textContent = 'Server slow — attendance check may take longer than usual';
     })();
+  
   

@@ -532,54 +532,87 @@
         loaderEl.textContent = 'Fetching attendance...';
 
         // Fire backend + ALL proxies simultaneously — first valid response wins
-        // Backend should win every time now that it's kept warm by cron-job.org
-        const candidates = [
-          tryFetch(BACKEND + '/attendance/' + tab, postOpts, 6000),                                                       // 🏆 Backend (warm, fastest)
-          tryFetch('https://corsproxy.io/?' + encodeURIComponent(targetUrl), postOpts, 8000),                             // Fallback 1
-          tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl), postOpts, 8000),                // Fallback 2
-          tryFetch('https://corsproxy.io/?' + encodeURIComponent(getUrl), { method: 'GET' }, 8000),                      // Fallback 3
-          tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(getUrl), { method: 'GET' }, 8000),         // Fallback 4
-          tryFetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(getUrl), { method: 'GET' }, 8000),   // Fallback 5
+        const labeled = [
+          { label: 'Backend',           p: tryFetch(BACKEND + '/attendance/' + tab, postOpts, 12000) },
+          { label: 'allorigins POST',    p: tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(targetUrl), postOpts, 10000) },
+          { label: 'allorigins GET',     p: tryFetch('https://api.allorigins.win/raw?url=' + encodeURIComponent(getUrl), { method: 'GET' }, 10000) },
+          { label: 'codetabs GET',       p: tryFetch('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(getUrl), { method: 'GET' }, 10000) },
+          { label: 'corsproxy GET',      p: tryFetch('https://corsproxy.io/?' + encodeURIComponent(getUrl), { method: 'GET' }, 10000) },
+          { label: 'cors.sh GET',        p: tryFetch('https://cors.sh/' + getUrl, { method: 'GET', headers: { 'x-cors-api-key': 'temp_demo' } }, 10000) },
         ];
 
-        const text = await Promise.any(candidates);
-        return JSON.parse(text);
+        // Log individual failures for debugging
+        labeled.forEach(({ label, p }) => p.catch(e => console.log('[SXC] ' + label + ' failed:', e.message)));
+
+        try {
+          const text = await Promise.any(labeled.map(x => x.p));
+          return JSON.parse(text);
+        } catch (e) {
+          // AggregateError — all proxies failed
+          throw new Error('All proxies failed. Check your internet connection or try again in a moment. (Open DevTools Console for details.)');
+        }
       }
 
       try {
-        let data, subjectRows = null;
+        let data, subjectRows = null, subjectSource = 'overall';
 
         if (currentTab === 'overall') {
-          // Fetch BOTH: overall aggregate + monthly for subject-wise breakdown
+          // Step 1: fetch correct aggregate totals from the official overall endpoint
           document.getElementById('loaderText').textContent = 'Fetching overall summary...';
           data = await fetchEndpoint('overall', overallParams);
 
-          // Now also fetch monthly data for subject-wise breakdown + student info
+          // Step 2: fetch per-subject breakdown from monthly endpoint (current month).
+          // The monthly API returns cumulative semester totals per subject, so the
+          // current month's response is the best source for per-subject overall figures.
           try {
-            document.getElementById('loaderText').textContent = 'Fetching subject-wise data...';
-            const monthlyData = await fetchEndpoint('monthly', monthlyParams);
-            // Monthly response has real student name — use it for the name card
-            fillStudentCard(monthlyData);
-            const monthlyRows = normalize(monthlyData);
-            // Keep only rows that have a subjectTitle (subject-wise rows, not aggregate)
-            const subjectWise = monthlyRows.filter(r => r['subjectTitle'] || r['subjectCode']);
+            document.getElementById('loaderText').textContent = 'Fetching subject-wise breakdown...';
+            const now = new Date();
+            const mp = new URLSearchParams();
+            mp.append('examRollNo', roll);
+            mp.append('semester', selectedSem);
+            mp.append('date', (now.getMonth() + 1) + '/15/' + now.getFullYear());
+            const monthData = await fetchEndpoint('monthly', mp);
 
-            // Deduplicate: monthly API returns one row per class session per day.
-            // Group by subjectCode (or subjectTitle) and keep the row with the
-            // highest totalClasses — that's the most complete/up-to-date record.
-            if (subjectWise.length > 0) {
-              const subjectMap = new Map();
-              subjectWise.forEach(r => {
+            // The monthly API returns one row per subject per month (monthValue field).
+            // A single call with the current date returns ALL months' rows for the semester.
+            // Sum totalClasses + totalPresent across all months per subject.
+            const subjectMap = new Map();
+            normalize(monthData)
+              .filter(r => r['subjectTitle'] || r['subjectCode'])
+              .forEach(r => {
                 const key = r['subjectCode'] || r['subjectTitle'] || '';
+                if (!key) return;
+                const classes = parseInt(r['totalClasses']) || 0;
+                const present = parseInt(r['totalPresent']) || 0;
+                if (classes === 0) return;
                 const existing = subjectMap.get(key);
-                const currentTotal = parseInt(r['totalClasses']) || 0;
-                const existingTotal = existing ? (parseInt(existing['totalClasses']) || 0) : -1;
-                if (!existing || currentTotal > existingTotal) subjectMap.set(key, r);
+                if (!existing) {
+                  subjectMap.set(key, { ...r, totalClasses: classes, totalPresent: present });
+                } else {
+                  const newClasses = existing.totalClasses + classes;
+                  const newPresent = existing.totalPresent + present;
+                  subjectMap.set(key, {
+                    ...existing,
+                    totalClasses: newClasses,
+                    totalPresent: newPresent,
+                    percentage: newClasses > 0
+                      ? ((newPresent / newClasses) * 100).toFixed(2) + '%'
+                      : '0%',
+                  });
+                }
               });
-              subjectRows = Array.from(subjectMap.values());
+
+            if (subjectMap.size > 0) {
+              // Convert numeric totals back to strings (what buildOverallView expects)
+              subjectRows = Array.from(subjectMap.values()).map(r => ({
+                ...r,
+                totalClasses: String(r.totalClasses),
+                totalPresent: String(r.totalPresent),
+              }));
+              subjectSource = 'overall';
             }
-          } catch (e) {
-            console.log('[SXC] Monthly fetch failed (will show overall only):', e.message);
+          } catch(e) {
+            console.log('[SXC] Monthly subject fetch failed:', e.message);
           }
         } else {
           data = await fetchEndpoint(currentTab, paramMap[currentTab]);
@@ -592,19 +625,15 @@
           showError('No data found. Verify your roll number and semester.'); return;
         }
 
-        // Fill student card from overall data (has course_Name)
         fillStudentCard(data);
 
-        const labelMap = { overall: 'Subject-Wise Attendance', monthly: 'Monthly Attendance Summary', daily: 'Daily Attendance Details' };
+        const labelMap = { overall: 'Overall Attendance', monthly: 'Monthly Attendance Summary', daily: 'Daily Attendance Details' };
         document.getElementById('resultsLabel').textContent = labelMap[currentTab];
 
         if (currentTab === 'overall') {
           const overallRows = normalize(data);
-          // Find the aggregate row
           const aggRow = overallRows.find(r => !r['subjectTitle']) || overallRows[0];
-
-          // Build the combined overall view
-          buildOverallView(aggRow, subjectRows);
+          buildOverallView(aggRow, subjectRows, subjectSource);
 
         } else if (currentTab === 'daily') {
           const rows = normalize(data);
@@ -654,58 +683,64 @@
       }
     }
 
-    function buildOverallView(aggRow, subjectRows) {
+    function buildOverallView(aggRow, subjectRows, subjectSource) {
       const pctRaw = aggRow ? (aggRow['percentage'] || '') : '';
       const pct = parseFloat(pctRaw);
       const totalClasses = aggRow ? (aggRow['totalClasses'] || '—') : '—';
       const totalPresent = aggRow ? (aggRow['totalPresent'] || '—') : '—';
       const cls = isNaN(pct) ? 'green' : pctClass(pct);
+      const showNotif = localStorage.getItem('sxc_notif') !== 'false';
 
       let html = '';
 
-      if (subjectRows && subjectRows.length > 0) {
-        // Show per-subject cards from monthly data
-        let good = 0, warn = 0, bad = 0, lowSubjects = [];
-        const showNotif = localStorage.getItem('sxc_notif') !== 'false';
+      // --- Overall hero banner (full semester cumulative) ---
+      if (aggRow && !isNaN(pct)) {
+        const overallCalc = (aggRow['totalPresent'] && aggRow['totalClasses']) ? calcAttendance(aggRow['totalPresent'], aggRow['totalClasses']) : null;
+        let overallCalcHtml = '';
+        if (overallCalc) {
+          if (overallCalc.type === 'safe') overallCalcHtml = overallCalc.canSkip > 0
+            ? '<span class="calc-chip can-skip" style="font-size:13px;padding:8px 16px;">✓ Can skip ' + overallCalc.canSkip + ' more class' + (overallCalc.canSkip > 1 ? 'es' : '') + ' in total</span>'
+            : '<span class="calc-chip at-limit" style="font-size:13px;padding:8px 16px;">⚠ At limit — attend all classes</span>';
+          else overallCalcHtml = '<span class="calc-chip must-attend" style="font-size:13px;padding:8px 16px;">⚡ Need ' + overallCalc.mustAttend + ' more class' + (overallCalc.mustAttend > 1 ? 'es' : '') + ' to reach 75%</span>';
+        }
+        const clrMap = { green: '#10b981', yellow: '#f59e0b', red: '#ef4444' };
+        const clr = clrMap[cls] || '#10b981';
+        html += '<div style="'
+          + 'background:linear-gradient(135deg,rgba(124,58,237,0.18),rgba(14,165,233,0.12));'
+          + 'border:1px solid rgba(124,58,237,0.3);'
+          + 'border-radius:20px;padding:22px 20px 18px;margin-bottom:16px;'
+          + 'display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;'
+          + 'box-shadow:0 8px 32px rgba(124,58,237,0.15);'
+          + '">'
+          + '<div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:rgba(240,240,255,0.5)">📊 Overall Total</div>'
+          + '<div style="font-size:52px;font-weight:800;line-height:1;font-family:Syne,sans-serif;color:' + clr + ';text-shadow:0 0 24px ' + clr + '55;">' + Math.round(pct) + '%</div>'
+          + '<div style="display:flex;gap:10px;justify-content:center;">'
+          +   '<div style="background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);border-radius:20px;padding:6px 14px;font-size:13px;font-weight:600;color:#10b981;">✓ ' + totalPresent + ' Present</div>'
+          +   '<div style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:20px;padding:6px 14px;font-size:13px;font-weight:600;color:rgba(240,240,255,0.7);">📚 ' + totalClasses + ' Total</div>'
+          + '</div>'
+          + (overallCalcHtml ? '<div>' + overallCalcHtml + '</div>' : '')
+          + '</div>';
+      }
 
-        // Overall Total — hero banner, visually distinct from subject cards
-        if (aggRow && !isNaN(pct)) {
-          const overallCalc = (aggRow['totalPresent'] && aggRow['totalClasses']) ? calcAttendance(aggRow['totalPresent'], aggRow['totalClasses']) : null;
-          let overallCalcHtml = '';
-          if (overallCalc) {
-            if (overallCalc.type === 'safe') overallCalcHtml = overallCalc.canSkip > 0
-              ? '<span class="calc-chip can-skip" style="font-size:13px;padding:8px 16px;">✓ Can skip ' + overallCalc.canSkip + ' more class' + (overallCalc.canSkip > 1 ? 'es' : '') + ' in total</span>'
-              : '<span class="calc-chip at-limit" style="font-size:13px;padding:8px 16px;">⚠ At limit — attend all classes</span>';
-            else overallCalcHtml = '<span class="calc-chip must-attend" style="font-size:13px;padding:8px 16px;">⚡ Need ' + overallCalc.mustAttend + ' more class' + (overallCalc.mustAttend > 1 ? 'es' : '') + ' to reach 75%</span>';
-          }
-          const clrMap = { green: '#10b981', yellow: '#f59e0b', red: '#ef4444' };
-          const clr = clrMap[cls] || '#10b981';
-          html += '<div style="'
-            + 'background:linear-gradient(135deg,rgba(124,58,237,0.18),rgba(14,165,233,0.12));'
-            + 'border:1px solid rgba(124,58,237,0.3);'
-            + 'border-radius:20px;padding:22px 20px 18px;margin-bottom:16px;'
-            + 'display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;'
-            + 'box-shadow:0 8px 32px rgba(124,58,237,0.15);'
-            + '">'
-            // Label
-            + '<div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:rgba(240,240,255,0.5)">📊 Overall Total</div>'
-            // Big percentage
-            + '<div style="font-size:52px;font-weight:800;line-height:1;font-family:Syne,sans-serif;color:' + clr + ';text-shadow:0 0 24px ' + clr + '55;">' + Math.round(pct) + '%</div>'
-            // Present / Total pills
-            + '<div style="display:flex;gap:10px;justify-content:center;">'
-            +   '<div style="background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);border-radius:20px;padding:6px 14px;font-size:13px;font-weight:600;color:#10b981;">✓ ' + totalPresent + ' Present</div>'
-            +   '<div style="background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.12);border-radius:20px;padding:6px 14px;font-size:13px;font-weight:600;color:rgba(240,240,255,0.7);">📚 ' + totalClasses + ' Total</div>'
-            + '</div>'
-            // Calc chip
-            + (overallCalcHtml ? '<div>' + overallCalcHtml + '</div>' : '')
-            + '</div>';
+      // --- Per-subject cards ---
+      if (subjectRows && subjectRows.length > 0) {
+        // If data came from monthly fallback, show a small notice
+        if (subjectSource === 'monthly') {
+          const _miv = document.getElementById('monthInput').value;
+          const mn = _miv ? new Date(_miv + '-15').toLocaleString('default', { month: 'long', year: 'numeric' }) : new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
+          html += '<div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);border-radius:10px;padding:10px 14px;margin-bottom:12px;display:flex;gap:8px;align-items:center;">'
+            + '<div style="font-size:14px">📅</div>'
+            + '<div style="font-size:11.5px;color:rgba(245,158,11,0.9);line-height:1.5;">'
+            + 'Subject-wise figures below are from <strong>' + (mn || 'the current month') + '</strong> (overall API returned aggregate only). Use the <strong>Monthly</strong> tab to change the month.'
+            + '</div></div>';
         }
 
+        let good = 0, warn = 0, bad = 0, lowSubjects = [];
         subjectRows.forEach((row, i) => {
           const name = row['subjectTitle'] || 'Subject ' + (i + 1);
           const code = row['subjectCode'] || '';
-          const sRaw = row['percentage'] || '';
-          const sPct = parseFloat(sRaw);
+          const pctRaw2 = row['percentage'] || '';
+          const sPct = parseFloat(pctRaw2);
           const sCls = isNaN(sPct) ? 'green' : pctClass(sPct);
           const sClasses = row['totalClasses'] || '';
           const sPresent = row['totalPresent'] || '';
@@ -724,7 +759,7 @@
             else calcHtml = '<span class="calc-chip must-attend">⚡ Need ' + calc.mustAttend + ' more class' + (calc.mustAttend > 1 ? 'es' : '') + ' for 75%</span>';
           }
 
-          const ring = !isNaN(sPct) ? makePctRing(sPct, sCls) : `<div class="pct-ring"><div class="pct-ring-text">—</div></div>`;
+          const ring = !isNaN(sPct) ? makePctRing(sPct, sCls) : '<div class="pct-ring"><div class="pct-ring-text">—</div></div>';
 
           html += '<div class="subject-card" style="animation-delay:' + (i * 0.06) + 's">'
             + '<div class="subject-main">'
@@ -738,7 +773,9 @@
         document.getElementById('statGood').textContent = good;
         document.getElementById('statWarn').textContent = warn;
         document.getElementById('statBad').textContent = bad;
-        document.getElementById('statsRow').style.display = 'grid';
+        document.getElementById('statLabel0').textContent = '≥75%';
+        document.getElementById('statLabel1').textContent = '60–74%';
+        document.getElementById('statLabel2').textContent = '<60%';
 
         if (showNotif && lowSubjects.length > 0) {
           document.getElementById('warningText').textContent = lowSubjects.length + ' subject(s) below 75%: ' + lowSubjects.join(', ') + '. Check red chips.';
@@ -746,28 +783,12 @@
         }
 
       } else {
-        // Fallback: only aggregate available
-        const ring = !isNaN(pct) ? makePctRing(pct, cls) : `<div class="pct-ring"><div class="pct-ring-text">—</div></div>`;
-        const calc = (aggRow && aggRow['totalPresent'] && aggRow['totalClasses']) ? calcAttendance(aggRow['totalPresent'], aggRow['totalClasses']) : null;
-        let calcHtml = '';
-        if (calc) {
-          if (calc.type === 'safe') calcHtml = calc.canSkip > 0 ? '<span class="calc-chip can-skip">✓ Can skip ' + calc.canSkip + ' more class' + (calc.canSkip > 1 ? 'es' : '') + '</span>' : '<span class="calc-chip at-limit">⚠ At limit — attend all</span>';
-          else calcHtml = '<span class="calc-chip must-attend">⚡ Need ' + calc.mustAttend + ' more class' + (calc.mustAttend > 1 ? 'es' : '') + ' for 75%</span>';
-        }
-
-        html += '<div class="subject-card">'
-          + '<div class="subject-main">'
-          + '<div class="subject-info"><div class="subject-name">📊 All Subjects Combined</div>'
-          + '<div class="subject-sub">' + totalPresent + ' present / ' + totalClasses + ' total classes</div></div>'
-          + ring + '</div>'
-          + (calcHtml ? '<div class="calc-strip">' + calcHtml + '</div>' : '')
-          + '</div>';
-
-        html += '<div style="background:rgba(14,165,233,0.1);border:1px solid rgba(14,165,233,0.25);border-radius:12px;padding:12px 14px;margin-top:4px;display:flex;gap:10px;align-items:flex-start;">'
-          + '<div style="font-size:18px;flex-shrink:0">ℹ️</div>'
+        // No subject rows at all — show tip
+        html += '<div style="background:rgba(14,165,233,0.1);border:1px solid rgba(14,165,233,0.25);border-radius:12px;padding:12px 14px;margin-top:12px;display:flex;gap:10px;align-items:flex-start;">'
+          + '<div style="font-size:18px;flex-shrink:0">💡</div>'
           + '<div style="font-size:12px;color:rgba(14,165,233,0.9);line-height:1.6;">'
           + '<strong style="display:block;margin-bottom:3px;">Subject-wise data unavailable</strong>'
-          + 'Could not retrieve per-subject breakdown this time. Try the <strong>Monthly</strong> tab.'
+          + 'The portal did not return per-subject data. Switch to the <strong>Monthly</strong> tab to see attendance per subject.'
           + '</div></div>';
 
         if (!isNaN(pct)) {
@@ -778,9 +799,9 @@
           document.getElementById('statLabel1').textContent = 'Total';
           document.getElementById('statLabel2').textContent = 'Overall';
         }
-        document.getElementById('statsRow').style.display = 'grid';
       }
 
+      document.getElementById('statsRow').style.display = 'grid';
       document.getElementById('resultsBody').innerHTML = html;
     }
 

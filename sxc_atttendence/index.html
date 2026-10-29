@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 
 <head>
@@ -42,12 +42,23 @@
         </div>
       </div>
 
+      <!-- Backend warm-up status bar -->
+      <div id="wakeBar" style="display:none;align-items:center;justify-content:center;gap:8px;
+           padding:7px 14px;margin:6px 0 2px;
+           background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.3);
+           border-radius:12px;font-size:12px;font-weight:600;color:#f59e0b;">
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;
+              background:#f59e0b;animation:pulse 1s infinite;flex-shrink:0"></span>
+        <span id="wakeMsg">Waking up server… first load may take ~30s</span>
+      </div>
+
       <!-- Tabs -->
       <div class="tab-bar">
         <div class="tab active" onclick="switchTab('overall',this)"><span>Overall</span></div>
         <div class="tab" onclick="switchTab('monthly',this)"><span>Monthly</span></div>
         <div class="tab" onclick="switchTab('daily',this)"><span>Daily</span></div>
       </div>
+
     </div>
 
     <!-- Content -->
